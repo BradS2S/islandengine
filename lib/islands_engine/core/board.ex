@@ -13,16 +13,18 @@ defmodule IslandsEngine.Board do
   end
 
   def overlaps_existing_island?(board, new_key, new_island) do
-    already_island_type?(board, new_key) and new_island_overlap_any?(board, new_island)
+    Enum.any?(board, fn {key, island} ->
+      key != new_key and Island.overlaps?(island, new_island)
+    end)
   end
 
   # not reader friendly but I did it just so I could make sure I understand how these work
-  # &1 is the key (island type): Enum.any?(board, fn {key, island} -> key != new_key end))
-  defp already_island_type?(board, new_key), do: Enum.any?(board, &(&1 != new_key))
+  # # &1 is the key (island type): Enum.any?(board, fn {key, island} -> key != new_key end))
+  # defp already_island_type?(board, new_key), do: Enum.any?(board, &(&1 != new_key))
 
-  defp new_island_overlap_any?(board, new_island) do
-    Enum.any?(board, fn {_key, island} -> Island.overlaps?(island, new_island) end)
-  end
+  # defp new_island_overlap_any?(board, new_island) do
+  #   Enum.any?(board, fn {_key, island} -> Island.overlaps?(island, new_island) end)
+  # end
 
   def all_islands_positioned?(board) do
     Enum.all?(Island.types, fn type -> Map.has_key?(board, type) end)
@@ -51,7 +53,7 @@ defmodule IslandsEngine.Board do
 
   defp guess_response(:miss, board), do: {:miss, :none, :no_win, board}
 
-  defp forest_check(board. key) do
+  defp forest_check(board, key) do
     case forested?(board, key) do
       true -> key
       false -> :none
