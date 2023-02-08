@@ -3,6 +3,7 @@ defmodule IslandsEngine.Game do
 
   alias IslandsEngine.{Guesses, Coordinate, Island, Board, Rules}
 
+  @timeout :infinity
 
   ## Players, opponents
   @players [:player1, :player2]
@@ -13,9 +14,10 @@ defmodule IslandsEngine.Game do
 
   # Start a new game
   def start_link(name) when is_binary(name) do
-    GenServer.start_link(__MODULE__, name, [])
+    GenServer.start_link(__MODULE__, name, name: register_process(name))
   end
 
+  def register_process(name), do: {:via, Registry, {Registry.Game, name}}
   # Island(s)
   def set_islands(game, player) when player in @players do
     GenServer.call(game, {:set_islands, player})
@@ -26,7 +28,9 @@ defmodule IslandsEngine.Game do
   end
 
   def update_guesses(state_data, player_key, hit_or_miss, coordinate) do
-    update_in(state_data[player_key].guesses, fn guesses -> Guesses.add(guesses, hit_or_miss, coordinate) end)
+    update_in(state_data[player_key].guesses, fn guesses ->
+      Guesses.add(guesses, hit_or_miss, coordinate)
+    end)
   end
 
   # Player
@@ -36,23 +40,24 @@ defmodule IslandsEngine.Game do
     GenServer.call(game, {:add_player, name})
   end
 
-  defp add_player_name(%{player2: %{name: player2_name}} = state_data, name) when player2_name == nil do
+  defp add_player_name(%{player2: %{name: player2_name}} = state_data, name)
+       when player2_name == nil do
     put_in(state_data.player2.name, name)
   end
 
   def guess_coordinate(game, player, row, col) when player in @players do
     GenServer.call(game, {:guess_coordinate, player, row, col})
   end
+
   # Board
   defp update_board(state_data, player, board) do
     Map.update!(state_data, player, fn player -> %{player | board: board} end)
   end
 
-
-  #Rules
+  # Rules
   defp update_rules(state_data, rules), do: %{state_data | rules: rules}
 
-  defp reply_success(state_data, reply), do: {:reply, reply, state_data}
+  defp reply_success(state_data, reply), do: {:reply, reply, state_data, @timeout}
 
   # Examples of API
   def demo_call(game), do: GenServer.call(game, :demo_call)
@@ -64,15 +69,20 @@ defmodule IslandsEngine.Game do
   def init(name) do
     player1 = %{name: name, board: Board.new(), guesses: Guesses.new()}
     player2 = %{name: nil, board: Board.new(), guesses: Guesses.new()}
-    {:ok, %{player1: player1, player2: player2, rules: %Rules{}}}
+    {:ok, %{player1: player1, player2: player2, rules: %Rules{}}, @timeout}
   end
 
   @impl true
   def handle_info(:first, state) do
-    #IO.puts("stuff")
+    # IO.puts("stuff")
     {:noreply, state}
   end
 
+  @impl true
+  def handle_info(:timeout, state) do
+    # IO.puts("stuff")
+    {:stop, {:shutdown, :timeout}, state}
+  end
   # calls are synchronous
   @impl true
   def handle_call(:demo_call, _from, state) do
@@ -113,43 +123,44 @@ defmodule IslandsEngine.Game do
   end
 
   @impl true
-  @spec handle_call({atom, atom}, GenServer.from(), struct) :: map, {atom, %Board{}} | {:reply, :error, map} | {:reply, {:error, atom}, map}
+  @spec(
+    handle_call({atom, atom}, GenServer.from(), struct) :: map,
+    {atom, %Board{}} | {:reply, :error, map} | {:reply, {:error, atom}, map}
+  )
   def handle_call({:set_islands, player}, _from, state_data) do
     board = player_board(state_data, player)
+
     with {:ok, rules} <- Rules.check(state_data.rules, {:set_islands, player}),
-         true         <- Board.all_islands_positioned?(board)
-         do
-           state_data
-           |> update_rules(rules)
-           |>reply_success({:ok, board})
-         else
-          :error -> {:reply, :error, state_data}
-          false -> {:reply, {:error, :not_all_islands_positioned}, state_data}
-         end
+         true <- Board.all_islands_positioned?(board) do
+      state_data
+      |> update_rules(rules)
+      |> reply_success({:ok, board})
+    else
+      :error -> {:reply, :error, state_data}
+      false -> {:reply, {:error, :not_all_islands_positioned}, state_data}
+    end
   end
 
   @impl true
   def handle_call({:guess_coordinate, player_key, row, col}, _from, state_data) do
     opponent_key = opponent(player_key)
     opponent_board = player_board(state_data, opponent_key)
-    with  {:ok, rules} <- Rules.check(state_data.rules, {:guess_coordinate, player_key}),
-          {:ok, coordinate} <- Coordinate.new(row, col),
-          {hit_or_miss, forested_island, win_status, opponent_board} <- Board.guess(opponent_board, coordinate),
-          {:ok, rules} <- Rules.check(rules, {:win_check, win_status})
-    do
-          state_data
-          |> update_board(opponent_key, opponent_board)
-          |> update_guesses(player_key, hit_or_miss, coordinate)
-          |> update_rules(rules)
-          |> reply_success({hit_or_miss, forested_island, win_status})
-    else
 
+    with {:ok, rules} <- Rules.check(state_data.rules, {:guess_coordinate, player_key}),
+         {:ok, coordinate} <- Coordinate.new(row, col),
+         {hit_or_miss, forested_island, win_status, opponent_board} <-
+           Board.guess(opponent_board, coordinate),
+         {:ok, rules} <- Rules.check(rules, {:win_check, win_status}) do
+      state_data
+      |> update_board(opponent_key, opponent_board)
+      |> update_guesses(player_key, hit_or_miss, coordinate)
+      |> update_rules(rules)
+      |> reply_success({hit_or_miss, forested_island, win_status})
+    else
       :error -> {:reply, :error, state_data}
       {:error, :invalid_coordinate} -> {:reply, {:error, :invalid_coordinate}, state_data}
-
     end
   end
-
 
   # casts are asynchronous
 
@@ -158,6 +169,4 @@ defmodule IslandsEngine.Game do
   def handle_cast({:demo_cast, new_value}, state) do
     {:noreply, Map.put(state, :test, new_value)}
   end
-
-
 end
