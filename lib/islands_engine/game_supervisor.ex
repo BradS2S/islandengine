@@ -9,7 +9,10 @@ defmodule IslandsEngine.GameSupervisor do
   # https://hexdocs.pm/elixir/1.13/DynamicSupervisor.html#start_child/2
   def start_game(name), do: DynamicSupervisor.start_child(__MODULE__, {Game, name})
 
-  def stop_game(name), do: DynamicSupervisor.terminate_child(__MODULE__, pid_from_name(name))
+  def stop_game(name) do
+    :ets.delete(:game_state, name)
+    DynamicSupervisor.terminate_child(__MODULE__, pid_from_name(name))
+  end
 
   # Application arg value passes into init_arg
   # links supervisor process to calling process (IslandsEngine.Application)
@@ -31,9 +34,9 @@ defmodule IslandsEngine.GameSupervisor do
   # The default implementation initializes the supervisor with
   # an empty list of child specifications,
   # which means it won't supervise any processes by default.
-  def init(args) do
+  def init(_args) do
 
-    DynamicSupervisor.init(args)
+    DynamicSupervisor.init([Game])
   end
 
 end

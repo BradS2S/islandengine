@@ -18,6 +18,15 @@ defmodule IslandsEngine.Game do
   end
 
   def register_process(name), do: {:via, Registry, {Registry.Game, name}}
+
+  #End game
+  def terminate({:shutdown, :timeout}, state_data) do
+    :ets.delete(:game_state, state_data.player1.name)
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
   # Island(s)
   def set_islands(game, player) when player in @players do
     GenServer.call(game, {:set_islands, player})
@@ -57,7 +66,16 @@ defmodule IslandsEngine.Game do
   # Rules
   defp update_rules(state_data, rules), do: %{state_data | rules: rules}
 
-  defp reply_success(state_data, reply), do: {:reply, reply, state_data, @timeout}
+  defp reply_success(state_data, reply) do
+    :ets.insert(:game_state, {state_data.player1.name, state_data})
+    {:reply, reply, state_data}
+  end
+
+  defp fresh_state(name) do
+    player1 = %{name: name, board: Board.new(), guesses: Guesses.new()}
+    player2 = %{name: nil, board: Board.new(), guesses: Guesses.new()}
+    %{player1: player1, player2: player2, rules: %Rules{}}
+  end
 
   # Examples of API
   def demo_call(game), do: GenServer.call(game, :demo_call)
@@ -66,10 +84,10 @@ defmodule IslandsEngine.Game do
   ## Defining GenServer Callbacks
 
   @impl true
+  # init is blocking so you send a message to yourself to be performed by the GenServer
   def init(name) do
-    player1 = %{name: name, board: Board.new(), guesses: Guesses.new()}
-    player2 = %{name: nil, board: Board.new(), guesses: Guesses.new()}
-    {:ok, %{player1: player1, player2: player2, rules: %Rules{}}, @timeout}
+  send(self(), {:set_state, name})
+  {:ok, fresh_state(name)}
   end
 
   @impl true
@@ -82,6 +100,16 @@ defmodule IslandsEngine.Game do
   def handle_info(:timeout, state) do
     # IO.puts("stuff")
     {:stop, {:shutdown, :timeout}, state}
+  end
+
+  def handle_info({:set_state, name}, _state_data) do
+    state_data =
+      case :ets.lookup(:game_state, name) do
+        [] -> fresh_state(name)
+        [{_key, state}] -> state
+      end
+      :ets.insert(:game_state, {name, state_data})
+      {:noreply, state_data}
   end
   # calls are synchronous
   @impl true
@@ -169,4 +197,10 @@ defmodule IslandsEngine.Game do
   def handle_cast({:demo_cast, new_value}, state) do
     {:noreply, Map.put(state, :test, new_value)}
   end
+
+
+  # In general, handle_info/2 is used to handle internal messages
+  # within a GenServer process,
+  # while handle_call/3 and handle_cast/2 are used to handle requests
+  # from external clients.
 end
